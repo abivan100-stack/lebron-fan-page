@@ -1,13 +1,15 @@
 # The King — a LeBron James fan tribute
 
-An unofficial, single-page tribute to LeBron James: twenty-two seasons, four titles, four MVPs, and the first forty thousand points anyone has scored. Built with Next.js (App Router), React 19, Tailwind CSS v4 and Framer Motion.
+A single-page LeBron tribute: twenty-three seasons, four titles, four MVPs, and the first forty thousand points anyone has scored. Built with Next.js (App Router), React 19, Tailwind CSS v4 and Framer Motion.
 
 ## Design direction
 
 **Hardwood.** The page is a floor seen from above, and court geometry is the layout grammar rather than decoration — the key, the arc and the baseline do the structural work that borders and cards would otherwise do.
 
-- **Ground** is maple (`#E9D6B0`). The palette is chalk `#FBF7EF`, wine `#5A1626`, ochre `#A2670F` and ball leather `#C24A16`. Each chapter in `the-rooms.tsx` takes its club's real colours, so colour is carrying information rather than mood.
-- **Type** is one variable family at two width extremes: Archivo pushed to `wdth 118` for monument lettering (`.monument`, `.headline`) and squeezed to `wdth 74` for every figure and label (`.narrow`, `.figure`). The narrow cut is what replaces the monospace face a design like this usually reaches for. Newsreader carries the reading copy.
+- **Ground** is maple (`#E9D6B0`) and maple-deep (`#DCBF8C`). The palette is chalk `#FBF7EF`, wine `#5A1626`, ochre `#A2670F` and ball leather `#C24A16`. Each chapter in `the-rooms.tsx` takes its club's real colours, so colour is carrying information rather than mood.
+- **Type** pairs athletic stadium typography with contemporary geometric clarity:
+  - **Oswald** (`--font-display`): Tall, condensed, authentic athletic display used for monument lettering (`.monument`), section headlines (`.headline`), and scoreboard tabular digits (`.figure`).
+  - **Plus Jakarta Sans** (`--font-text`): Clean, modern editorial geometric sans carrying all reading copy (`.prose-copy`), captions (`.narrow`), and data strings (`.narrow-bold`).
 - **The signature** is in the hero: the name straddles the paint line. `LEBRON` sits on bare maple in wine, `JAMES` reverses to chalk inside the painted key.
 
 Some things are absent on purpose. There is **no custom cursor, no fixed scroll-progress rail and no grain overlay** — they were removed as generic-agency tells, not by oversight. Please don't reinstate them as "polish". Likewise avoid tracked-out all-caps eyebrows above headings, meta strings joined with middle dots (`A · B · C`), spaced-em-dash labels, the "solid line / outlined line" headline formula, and uniform hover-lift card grids.
@@ -20,9 +22,9 @@ Some things are absent on purpose. There is **no custom cursor, no fixed scroll-
 - **Styling**: Tailwind CSS v4 with tokens in `app/globals.css`; `clsx` + `tailwind-merge` behind `cn()`
 - **Motion**: Framer Motion — scroll-linked transforms, masked reveals, reduced-motion aware
 - **UI primitives**: Radix `tabs` only, wrapped in `components/ui/tabs.tsx`
-- **Fonts**: Archivo (with the `wdth` axis) and Newsreader, self-hosted via `next/font`
+- **Fonts**: Oswald (display) and Plus Jakarta Sans (body), self-hosted via `next/font/google`
 - **Audio**: Web Audio API only — no audio assets, opt-in and off by default
-- **Icons**: none. The one icon in the UI is hand-drawn SVG; `app/favicon.ico` and `app/apple-icon.png` are pre-rasterised so they never depend on the viewer's fonts.
+- **Icons**: none from a library, and no icon font. One navigational icon is drawn inline in `components/back-to-top.tsx`; the other seven inline `<svg>` elements are the court and chart illustrations, drawn rather than imported. `app/favicon.ico` and `app/apple-icon.png` are pre-rasterised so they never depend on the viewer's fonts.
 
 ## Getting started
 
@@ -33,7 +35,18 @@ npm run build     # production build
 npm run start     # serve the production build
 npm run lint      # eslint
 npm run typecheck # tsc --noEmit
+npm test          # both suites: test:data, then test:render
+npm run test:data    # node:test, zero dependencies
+npm run test:render  # vitest + jsdom, the component render layer
 ```
+
+Two runners, split by what each is good at.
+
+`tests/smoke.test.ts`, the three `tier*` suites and `tests/design-guards.test.ts` run on **`node:test` with no dependencies at all**, as they always have. They assert on `lib/data/` — derived figures, internal consistency, and an `isLive` assertion so a silent fallback to `tests/fixtures/authoritative-data.ts` fails loudly instead of passing — and the design guards assert invariants against component and stylesheet **source as text**: anchor clearance, the overflow clip, the band cap, opener adjacency, the shape budget, the em-dash ban, the navigation registry.
+
+`tests/render/` runs on **Vitest + jsdom + Testing Library** and is the only layer that can put a component in a DOM. It mounts all 13 registered sections, the playoff matrix's filter and drawer, the season ruler's roving-tabindex keyboard model, the rooms' heading structure, and the sound provider's persistence and opt-in guarantees.
+
+The split is by cost, not preference: the data and guard suites pay nothing and finish in under a second, so a data or design regression is still caught by a zero-dependency gate. See `AGENTS.md` §5 for what is guarded and what still has to be checked in a browser — jsdom has no layout, so anything scroll-linked, visual, or contrast-related is not covered by any gate.
 
 > **Note for AI agents / contributors**: this project pins a Next.js version with breaking changes vs. training-data assumptions. Read `AGENTS.md` (root) before making framework-level changes — it points at the resolved docs under `node_modules/next/dist/docs/`. That file is regenerated by `next dev`; commit it as-is rather than reverting it.
 
@@ -41,61 +54,112 @@ npm run typecheck # tsc --noEmit
 
 ```
 app/
-  layout.tsx         Root layout — fonts (Archivo + wdth, Newsreader), metadata, skip link
-  page.tsx           Assembles the sections in order (see below)
-  globals.css        Design tokens, type classes, floor texture, focus ring
-  favicon.ico        Wine tile, chalk "23", ochre baseline (16/32/48)
-  apple-icon.png     The same mark at 180px
+  layout.tsx            Root layout — fonts (Oswald, Plus Jakarta Sans), metadata, skip link
+  page.tsx              Assembles the sections in chronological and editorial order
+  globals.css           Design tokens, type classes, floor texture, focus ring
+  favicon.ico           Wine tile, chalk "23", ochre baseline (16/32/48)
+  apple-icon.png        The same mark at 180px
 
 components/
-  court-shell.tsx    Global client shell: reduced-motion config + sound provider
-  court-diagram.tsx  Half-court drawn to real proportions (1ft = 10 units)
-  center-court.tsx   Hero — the name straddling the paint line
-  season-ruler.tsx   All 22 NBA seasons on one line, with the honours marked in place
-  honours-board.tsx  "Hardware" — the honours ledger, with two full-bleed paint blocks
-  the-rooms.tsx      Pinned chapters, one per place he has played
-  the-ledger.tsx     Points accumulating across four stints, plus per-stint detail
-  twenty-three.tsx   The number, and the fact it was not actually constant
-  last-shot.tsx      Interactive shot challenge (Web Audio feedback, opt-in)
-  four-nights.tsx    Four moments as alternating full-width bands
-  baseline.tsx       Footer — the page ends where the floor does
-  typeset.tsx        Shared type primitives (Counter, RiseLine, RiseWords,
-                     PaintedName, PaintRule, Caption)
-  sound-provider.tsx Opt-in Web Audio engine, localStorage-persisted, SSR-safe
-  sound-toggle.tsx   Sound on/off control, lives next to the game it belongs to
-  ui/tabs.tsx        Radix tabs, restyled as a painted underline
+  court-shell.tsx       Global client shell: reduced-motion config + sound provider + back-to-top
+  back-to-top.tsx       Hardwood-styled floating back-to-top button
+  court-diagram.tsx     Half-court drawn to real proportions (1ft = 10 units)
+  center-court.tsx      Hero — the name straddling the paint line with scroll affordance
+  season-ruler.tsx      Every NBA season on one line, with honours marked and touch-scrubbing
+  honours-board.tsx     "Hardware" — the honours ledger, with two full-bleed paint blocks
+  the-line.tsx          Career slash line (per-game points, rebounds, assists) with responsive mobile formatting
+  the-rooms.tsx         Pinned chapters, one per place he has played (tuned to snappy 420vh)
+  father-and-son.tsx    "Father & Son" — 21-year arc comparing 2003 debut with 2024 Bronny pairing
+  the-ledger.tsx        Points accumulating across four stints, with interactive clickable bars
+  shot-zones.tsx        "The Heat Map" — interactive SVG 9-zone shot efficiency across 4 career eras
+  playoff-matrix.tsx    "Playoff Matrix" — interactive postseason series ledger, with a per-franchise breakdown
+  era-compare.tsx       "Era vs Era" — head-to-head comparison tool across 5 career peaks
+  twenty-three.tsx      The number, and the fact it was not actually constant
+  last-shot.tsx         Interactive shot challenge with on-court release power gauge
+  four-nights.tsx       Four moments as alternating full-width bands with gold divider rule
+  the-block.tsx         "The Block" — interactive court scrub re-enactment of the 2016 Finals block
+  baseline.tsx          Footer — the page ends where the floor does
+  typeset.tsx           Shared type primitives (Counter, RiseLine, RiseWords, PaintedName, PaintRule, Caption, Kicker, StatBand) and the Opener type
+  sound-provider.tsx    Opt-in Web Audio engine, localStorage-persisted, SSR-safe
+  sound-toggle.tsx      Sound on/off control, lives next to the game it belongs to
+  ui/tabs.tsx           Radix tabs, restyled as a painted underline
 
 lib/
-  lebron-data.ts        Single source of truth for every factual claim (see below)
+  data/                 Single source of truth for every verified fact, stat, and series log
+    index.ts            The barrel, and the only import path. Holds the ground rules.
+    meta.ts             STATS_AS_OF
+    span.ts             Per-season table, team stints, Olympics
+    hero.ts  career.ts  honours.ts  rooms.ts  ledger.ts
+    twenty-three.ts  last-shot.ts  four-nights.ts  the-block.ts
+    shot-zones.ts  father-and-son.ts  era-compare.ts  baseline.ts
+    playoff-series.ts  buzzer-beaters.ts  triple-doubles.ts
   motion.ts             Shared easings, durations and variants
   use-reduced-motion.ts SSR-safe prefers-reduced-motion, for structural branching
   utils.ts              cn() class-merge helper
+
+tests/
+  smoke.test.ts               Data-module invariants, derived figures, verified era aggregates
+  design-guards.test.ts       Design invariants, asserted against component and stylesheet source
+  tier1-feature-coverage.test.ts
+  tier2-boundary-corner.test.ts
+  tier3-cross-combinations.test.ts
+  helpers/test-loader.ts      Probes the live data module and reports isLive
+  fixtures/                   Deliberately divergent dataset; only reachable if isLive is ignored
+  register.mjs, resolver.mjs  Node loader so the suites can resolve the "@/" alias
+  render/                     The DOM layer (vitest + jsdom)
+    setup.ts                  Stubs matchMedia, ResizeObserver, IntersectionObserver
+    seam.test.tsx             Proof that a .tsx can be imported, transformed and rendered
+    sections.test.tsx         All 13 registered sections mount, with clearance at runtime
+    playoff-matrix.test.tsx   Filter counts, the drawer, and the focus invariant
+    season-ruler.test.tsx     The roving tabindex contract, from a keyboard
+    rooms-and-shot.test.tsx   Heading structure, the room indicator, the shot counters
+    sound.test.tsx            Opt-in, persistence, and surviving a missing Web Audio API
+
+docs/
+  agents/               How the engineering skills are wired for this repo
+  plans/                Implementation plans, written before the work and amended after
 ```
 
 ## Content & data
 
-All copy and stats live in **`lib/lebron-data.ts`** — never hardcode a fact in a component. Ground rules baked into that file:
+All copy and stats live in **`lib/data/`** — never hardcode a fact in a component. Import from the
+barrel (`@/lib/data`), not from a domain file, so the split stays an internal detail. The ground
+rules are stated in the barrel's own docstring:
 
 - Headline honours (titles, MVPs, Finals MVPs, golds, all-time scoring rank, award years, championship years, Olympic years) are exact, documented facts.
-- Point and game totals are **rounded approximations** of regular-season figures, marked `approx` so the UI can label them.
+- **Every figure is exact, not rounded to land somewhere.** The four stint totals sum to the career number exactly (15,251 + 7,919 + 7,868 + 12,402 = 43,440), and the era aggregates in `SHOT_ZONES` are attempts-weighted over the seasons each era's `period` names — not peaks, and not a mean of the seasonal rates, which differ by tenths because 2011-12 was a 62-game season. Both reconciliations are asserted in `tests/smoke.test.ts`, including the cross-check that the two Cleveland stints together reproduce Basketball Reference's eleven-year Cleveland row (849 games, .492 / .337 / .733).
+- **Do not reintroduce an `approx` flag.** There was one, and nothing ever set it: two components branched on it, so the page carried two code paths for labelling a figure as approximate that could not fire. An unused flag that the UI branches on is a claim the code cannot keep. If a future figure genuinely is an approximation, set the flag *and* populate the data in the same commit, or the next reader inherits two sources of truth.
 - **Nothing is an invented index or a projection.** An earlier version of the stat section scored the career on a subjective "editorial index" radar chart; it was removed for exactly this reason.
 - The season ruler is **derived**, not hand-written. `SEASONS` is built from `TEAM_SPANS`, `TITLE_YEARS`, `MVP_YEARS`, `OLYMPICS` and `MILESTONES`, so the marks on the ruler cannot drift from the underlying facts. Add a fact to the small table, not to the ruler.
 - Bump `STATS_AS_OF` whenever the numbers are refreshed; it drives every "as of" label on the page.
 
 ## Motion & accessibility
 
-- All animation goes through `lib/motion.ts`. The vocabulary is split by job — `paint*` for something being laid onto the floor, `rise*` for lettering coming up inside a mask, `fromEdge` for content entering from the margin. Deliberately **not** one fade-and-slide-up applied to everything.
-- `MotionConfig reducedMotion="user"` wraps the app. Where reduced motion changes the *DOM* rather than just an animation, use `usePrefersReducedMotion()` from `lib/use-reduced-motion.ts` — Framer's own hook reads the media query during the first client render and will trip a hydration mismatch. The pinned chapters swap to stacked ones this way, and the shot court's reveal cover is not rendered at all under reduced motion, so it can never leave the court hidden.
+- `lib/motion.ts` holds the shared easing/duration scale and the masked-lettering variants the type primitives consume. One-off reveals (rules laid down, blocks entering from the margin) are tuned at their call site, because their timing is tied to that section's scroll distance. Deliberately **not** one fade-and-slide-up applied to everything. Every `show` transition in `lib/motion.ts` sets `inherit: true` — without it Framer discards the consuming element's `transition` prop and silently voids every per-line and per-letter `delay`. That applies to the *shared* variants, because those are the ones elements bind to with a `transition` prop of their own (`RiseLine`, `PaintedName`). A locally-defined `show` that carries its own `transition` does not need it, and must not be given one unless it is also consumed that way: `inherit` merges the prop into the variant, so on a variant that is its own animation it only adds a second source of truth for timing.
+- `MotionConfig reducedMotion="user"` wraps the app, but it is **not sufficient on its own**: it only snaps transform/layout keys, leaving `opacity` and any `delay`/`staggerChildren` running. Anything Framer animates therefore carries a `data-reveal` attribute, which `globals.css` uses to land it in its final position under `prefers-reduced-motion: reduce`, and repeating attention animations are stopped explicitly in JS. Where reduced motion changes the *DOM* rather than just an animation, use `usePrefersReducedMotion()` from `lib/use-reduced-motion.ts` — Framer's own hook reads the media query during the first client render and will trip a hydration mismatch. The pinned chapters swap to stacked ones this way.
+- **The page is readable and factually correct with JavaScript disabled.** Framer writes every `initial` state into the server HTML, so without JS the hidden state would simply be the resting state — 175 elements at `opacity: 0` and a hero at 0% visible, as measured with scripting disabled. A `<noscript>` block in `app/layout.tsx` lands all of it, and the counters render their final value server-side regardless. `AGENTS.md` §6 has the detail, and guard G9 keeps the block from regressing.
 - The focus ring is **two-tone**: a halo hugging the element plus an outline just outside it, in opposite values. Controls sit on both maple and painted grounds, so a single-colour ring would disappear somewhere.
 - The season ruler is one tab stop with roving `tabindex` — arrow keys, Home and End move between seasons rather than making 22 tab stops.
 - Sound is opt-in, off by default, and never autoplays. The shot challenge exposes its state through an `aria-live` region.
 - A skip-to-content link is in `app/layout.tsx`.
 
-Verified at 375 / 768 / 1440: no horizontal overflow, no console errors, keyboard path intact, and the reduced-motion build renders every heading.
+Re-verified against the production build rather than restated: at 375, 768 and
+1440 there is no document-level horizontal overflow (`documentElement.scrollWidth`
+equals `clientWidth` at all three), no console errors, and the keyboard path runs
+skip link → hero scroll affordance → season-ruler buttons → room tabs → ledger
+bars. Under `prefers-reduced-motion: reduce`, 1,346 text-bearing elements were
+walked and none sits below `opacity: 0.05`; all 15 `<h1>`/`<h2>` compute
+`opacity: 1` with no transform.
+
+Elements whose *box* extends past the viewport at these widths — the court
+decorations and the sliding room panels — are children of `overflow-hidden`
+sections, which is why the document does not scroll sideways. Counting boxes
+rather than scroll width is the wrong measurement and reports 83 false
+positives at 375px.
 
 ## Deployment
 
-Deploys to Vercel. `robots: { index: false, follow: false }` is set in `app/layout.tsx` — this is intentionally not indexed as an unofficial fan tribute. If that policy changes, remove it and add OpenGraph metadata, which the site currently has none of.
+Deploys to Vercel. The page is indexable, and `app/layout.tsx` ships the OpenGraph and Twitter card metadata that was previously absent — it was omitted while `robots: { index: false, follow: false }` made a link preview unreachable. The cards are text only: no `images` field is set, because a share card needs a 1200x630 asset and the only image in the repo is the 180x180 apple icon. `metadataBase` is unset for the same reason it looks unset: no deployment URL is recorded anywhere in the repo, and inventing one would ship a fabricated domain into the build output. Set both when a real card image and a real URL exist.
 
 ## Design skills
 

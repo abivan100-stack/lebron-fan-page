@@ -3,9 +3,28 @@
 import * as React from "react";
 import { motion } from "framer-motion";
 
-import { BASELINE, SECTIONS, STATS_AS_OF } from "@/lib/lebron-data";
+import { BASELINE, SECTIONS, STATS_AS_OF } from "@/lib/data";
 import { EASE_SETTLE, VIEWPORT_SOON } from "@/lib/motion";
 import { Caption, PaintRule, RiseLine } from "@/components/typeset";
+
+/**
+ * The year the tribute is current to, read out of the season the data covers.
+ *
+ * This was `new Date().getFullYear()` in the render of a client component on a
+ * statically prerendered route, which is a hydration hazard in both directions:
+ * the server stamps the year at BUILD time and the client recomputes it at LOAD
+ * time, so any year boundary (or simply a build that has been sitting around)
+ * produces a text mismatch that React reports and the client value silently
+ * wins. Nothing caught it, because the build never runs in a year-transition
+ * test and no test renders a component.
+ *
+ * Deriving it from `STATS_AS_OF` fixes both halves at once. It is deterministic,
+ * so the server and client always agree; and it is derived from the one constant
+ * that already declares how current the page is, so the footer cannot claim a
+ * year the page's own figures do not reach. A `useEffect` into state would only
+ * have fixed the mismatch, and left the no-JS HTML permanently stale.
+ */
+const STATS_AS_OF_YEAR = /20\d\d/.exec(STATS_AS_OF)?.[0] ?? "";
 
 /**
  * The baseline. The page ends where the floor does: one painted line, the
@@ -90,7 +109,12 @@ export function Baseline() {
             ))}
             <li>
               <Caption style={{ color: "var(--chalk-dim)" }}>
-                {new Date().getFullYear()}, a fan tribute
+                {/* Render the year and its comma only when there is a year;
+                    the old `\`${year}\`, a fan tribute` shipped a leading
+                    ", a fan tribute" if `STATS_AS_OF` ever stopped matching. */}
+                {STATS_AS_OF_YEAR
+                  ? `${STATS_AS_OF_YEAR}, a fan tribute`
+                  : "A fan tribute"}
               </Caption>
             </li>
           </ul>

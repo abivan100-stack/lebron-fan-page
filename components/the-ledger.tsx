@@ -10,10 +10,10 @@ import {
   TEAM_SPANS,
   type LedgerEntry,
   type Metric,
-} from "@/lib/lebron-data";
+} from "@/lib/data";
 import { EASE_PAINT, EASE_SETTLE, VIEWPORT_SOON } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-import { Caption, Counter, PaintRule, RiseWords } from "@/components/typeset";
+import { Caption, Counter, PaintRule, RiseWords, type Opener } from "@/components/typeset";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 /**
@@ -38,7 +38,13 @@ function colourFor(id: string) {
   return TEAM_SPANS.find((t) => t.id === id)?.floor ?? "var(--wine)";
 }
 
-function Accumulation({ activeId }: { activeId: string }) {
+function Accumulation({
+  activeId,
+  setActive,
+}: {
+  activeId: string;
+  setActive: (id: string) => void;
+}) {
   return (
     <div>
       <div className="flex items-end justify-between gap-6">
@@ -51,7 +57,7 @@ function Accumulation({ activeId }: { activeId: string }) {
       </div>
 
       <motion.div
-        className="mt-4 flex h-24 w-full overflow-hidden sm:h-28"
+        className="mt-4 flex h-24 w-full sm:h-28"
         initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.4 }}
@@ -65,14 +71,34 @@ function Accumulation({ activeId }: { activeId: string }) {
           return (
             <div
               key={stint.id}
-              className="relative min-w-0 overflow-hidden"
+              role="button"
+              tabIndex={0}
+              aria-label={`${stint.club}: ${stint.scored.toLocaleString("en-US")} points`}
+              aria-pressed={on}
+              onClick={() => setActive(stint.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setActive(stint.id);
+                }
+              }}
+              className={cn(
+                "group relative min-w-0 cursor-pointer transition-all duration-200",
+                "hover:brightness-110",
+                // `on-paint` so the ring inverts: a --wine outline on a wine
+                // fill is a 1:1 match and reads as no indicator at all. The
+                // container also no longer clips, so the ring is not cut off
+                // on the top and bottom edges; the paint span below carries
+                // the rounding instead.
+                "on-paint focus-visible:outline focus-visible:outline-2 focus-visible:outline-chalk focus-visible:outline-offset-[-2px] focus-visible:z-10",
+              )}
               style={{ flexGrow: stint.scored, flexBasis: 0 }}
             >
               {/* only the paint scales, so the figure sitting on it never
                   gets squashed while the bar is being laid down */}
               <motion.span
                 aria-hidden
-                className="absolute inset-0 origin-left"
+                className="absolute inset-0 origin-left overflow-hidden"
                 style={{ backgroundColor: colourFor(stint.id) }}
                 variants={{
                   hidden: { scaleX: 0 },
@@ -91,10 +117,15 @@ function Accumulation({ activeId }: { activeId: string }) {
                 animate={{ opacity: on ? 1 : 0 }}
                 transition={{ duration: 0.25, ease: EASE_SETTLE }}
               />
-              <span className="absolute inset-x-2 bottom-2 truncate">
+              {/* The label width is dictated by the stint's share of the
+                  career total, so the smallest segments get the narrowest
+                  boxes — exactly backwards from what fits a 6-character
+                  figure. Dropping `truncate` lets the type scale down
+                  instead of being cut off. */}
+              <span className="absolute inset-x-1 bottom-2 sm:inset-x-2">
                 <Caption
                   bold
-                  className="text-chalk"
+                  className="block text-chalk text-[0.625rem] sm:text-[0.8125rem] transition-opacity duration-200 group-hover:opacity-100 [font-size:clamp(0.5rem,2.1vw,0.8125rem)]"
                   style={{ opacity: on ? 1 : 0.72 }}
                 >
                   {stint.scored.toLocaleString("en-US")}
@@ -110,10 +141,10 @@ function Accumulation({ activeId }: { activeId: string }) {
         {STINTS.map((stint) => (
           <div
             key={stint.id}
-            className="min-w-0 border-r border-rule-strong pr-2 text-right last:border-r-0 last:pr-0"
+            className="min-w-0 border-r border-rule-strong pr-1 text-right last:border-r-0 last:pr-0 sm:pr-2"
             style={{ flexGrow: stint.scored, flexBasis: 0 }}
           >
-            <Caption className="block truncate text-muted">
+            <Caption className="block text-muted text-[0.5625rem] sm:text-[0.8125rem] [font-size:clamp(0.5rem,1.9vw,0.8125rem)]">
               {stint.running.value.toLocaleString("en-US")}
               {stint.running.suffix ?? ""}
             </Caption>
@@ -121,16 +152,20 @@ function Accumulation({ activeId }: { activeId: string }) {
         ))}
       </div>
 
-      <Caption className="mt-3 block text-muted/80">
-        {TOTAL.toLocaleString("en-US")} across the four stints, which is the
-        career total exactly. Nothing here is rounded to make it land.
+      <Caption className="mt-3 block text-muted">
+        {TOTAL.toLocaleString("en-US")} across the {STINTS.length} stints that
+        scored, which is the career total exactly. Nothing here is rounded to
+        make it land.
       </Caption>
     </div>
   );
 }
 
 function MetricLine({ metric }: { metric: Metric }) {
-  const fill = Math.max(0, Math.min(1, metric.value / metric.max));
+  // Guard `max`: `value / 0` is Infinity (0 / 0 is NaN), and `Math.min(1, NaN)`
+  // is NaN, which Framer turns into a `scaleX(NaN)` resting state.
+  const fill =
+    metric.max > 0 ? Math.max(0, Math.min(1, metric.value / metric.max)) : 0;
   return (
     <motion.div
       className="flex flex-col gap-2"
@@ -148,11 +183,6 @@ function MetricLine({ metric }: { metric: Metric }) {
           <Caption bold className="text-wine">
             {metric.label}
           </Caption>
-          {metric.approx ? (
-            <Caption className="text-[0.6875rem] text-muted/80">
-              approx.
-            </Caption>
-          ) : null}
         </span>
         <span className="figure text-[1.75rem] text-wine sm:text-[2rem]">
           <Counter
@@ -164,11 +194,29 @@ function MetricLine({ metric }: { metric: Metric }) {
         </span>
       </div>
       <div className="relative h-[6px] w-full bg-rule">
+        {/* Width on the `style` prop, animation on the transform, for the reason
+            given in `era-compare.tsx`: Framer's `initial` overwrites the inline
+            style with the hidden state, so an `initial={{ scaleX: 0 }}` over a
+            `w-full` element is neutralised by `NO_SCRIPT_CSS` into a bar at 100%
+            for every metric, whatever the data says. With the width in the style
+            and only the transform animated, the transform rule leaves the true
+            fill standing. `origin-left` means the reveal still grows rightwards,
+            so the animation is unchanged. */}
         <motion.div
-          className="absolute inset-y-0 left-0 w-full origin-left bg-wine"
+          className="absolute inset-y-0 left-0 origin-left bg-wine"
+          style={{ width: `${fill * 100}%` }}
           initial={{ scaleX: 0 }}
-          whileInView={{ scaleX: fill }}
-          viewport={{ once: false, amount: 0.5 }}
+          whileInView={{ scaleX: 1 }}
+          /* `once: true`, like every other `whileInView` on the page. These two
+             were the only `once: false` viewports in the codebase, and the
+             effect was that the ledger was the one section that is not
+             idempotent under scrolling: `once: false` reverts to `initial` on
+             exit, so scrolling back up to the hero collapsed all three metric
+             bars to scaleX 0 and re-faded every achievement row, and scrolling
+             back down replayed the whole reveal. Measured: bars at 0.953 /
+             0.913 / 0.927 in view, 0 / 0 / 0 at the top, 0.68 / 0.66 / 0.67 at
+             +250ms on the return, settling again at the original values. */
+          viewport={{ once: true, amount: 0.5 }}
           transition={{ duration: 1.1, ease: EASE_PAINT, delay: 0.1 }}
         />
       </div>
@@ -182,7 +230,7 @@ function LedgerPanel({ entry }: { entry: LedgerEntry }) {
       className="grid grid-cols-1 gap-x-14 gap-y-12 lg:grid-cols-2"
       initial="hidden"
       whileInView="show"
-      viewport={{ once: false, amount: 0.15 }}
+      viewport={{ once: true, amount: 0.15 }}
       variants={{ hidden: {}, show: { transition: { staggerChildren: 0.07 } } }}
     >
       <div className="flex flex-col gap-8">
@@ -293,7 +341,6 @@ function LedgerPanel({ entry }: { entry: LedgerEntry }) {
                 <td>
                   {m.value}
                   {m.suffix ?? ""}
-                  {m.approx ? " (approximate)" : ""}
                 </td>
               </tr>
             ))}
@@ -311,6 +358,14 @@ function LedgerPanel({ entry }: { entry: LedgerEntry }) {
   );
 }
 
+/**
+ * Opener: `instrument` -- Accumulation rule and stint tabs in the top edge of one inset panel.
+ *
+ * Declared, not inferred: the test gate reads these in `app/page.tsx` order and fails if
+ * two adjacent units share one. See `Opener` in typeset.tsx and DESIGN-AUDIT.md F-01.
+ */
+export const OPENER: Opener = "instrument";
+
 export function TheLedger() {
   const [active, setActive] = React.useState(LEDGER[0].id);
 
@@ -318,33 +373,42 @@ export function TheLedger() {
     <section
       id="ledger"
       aria-labelledby="ledger-heading"
-      className="floor relative px-5 py-20 sm:px-8 sm:py-28 md:px-14"
+      className="scroll-clearance floor relative px-5 py-20 sm:px-8 sm:py-28 md:px-14"
     >
-      <div className="mx-auto max-w-6xl">
-        <h2
-          id="ledger-heading"
-          className="monument max-w-[13ch] text-wine"
-          style={{ fontSize: "clamp(2.5rem, 8vw, 6rem)" }}
-        >
-          <RiseWords text={LEDGER_INTRO.heading} />
-        </h2>
-        <motion.p
-          className="prose-copy mt-6 max-w-[46ch] text-[1.0625rem] text-muted sm:text-lg"
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={VIEWPORT_SOON}
-          transition={{ duration: 0.8, ease: EASE_SETTLE, delay: 0.25 }}
-        >
-          {LEDGER_INTRO.copy} As of {STATS_AS_OF}.
-        </motion.p>
+      {/* Opener: instrument. The accumulation rule and the stint tabs are this
+          section's controls, so they sit in the top edge of one inset panel
+          with the heading, and the ledger's panels follow beneath it. No
+          heading block above the controls, and the heading is demoted from
+          `monument` to `headline` — the accumulating figure is this section's
+          display element (F-01). The inset is `bg-maple-deep/50` +
+          `border-rule` per AGENTS.md §1, never a stark white card. */}
+      <div className="mx-auto max-w-6xl rounded-none border border-rule bg-maple-deep/50">
+        <div className="px-5 pt-8 sm:px-7">
+          <h2
+            id="ledger-heading"
+            className="headline max-w-[15ch] text-wine"
+            style={{ fontSize: "clamp(2rem, 5vw, 3.75rem)" }}
+          >
+            <RiseWords text={LEDGER_INTRO.heading} />
+          </h2>
+          <motion.p
+            className="prose-copy mt-4 max-w-[46ch] text-[1.0625rem] text-muted sm:text-lg"
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={VIEWPORT_SOON}
+            transition={{ duration: 0.8, ease: EASE_SETTLE, delay: 0.25 }}
+          >
+            {LEDGER_INTRO.copy} As of {STATS_AS_OF}.
+          </motion.p>
 
-        <div className="mt-14">
-          <Accumulation activeId={active} />
+          <div className="mt-8 border-t border-rule pt-8">
+            <Accumulation activeId={active} setActive={setActive} />
+          </div>
         </div>
 
-        <div className="mt-16">
+        <div className="ledger-tabs mt-8 border-t border-rule px-5 pb-8 pt-6 sm:px-7">
           <Tabs value={active} onValueChange={setActive}>
-            <TabsList>
+            <TabsList aria-label="Career stint">
               {LEDGER.map((e) => (
                 <TabsTrigger key={e.id} value={e.id}>
                   <span className="relative z-10">{e.tab}</span>
@@ -369,6 +433,42 @@ export function TheLedger() {
           </Tabs>
         </div>
       </div>
+
+      {/* With JS off, the tab set is four-fifths missing and the control is
+          inert. Radix `TabsContent` mounts only the active panel, so the
+          server HTML carries `LEDGER[0]` and nothing else: Cleveland I, with
+          Miami, Cleveland II, Los Angeles and the national-team stanza simply
+          absent from a section titled "The ledger". The five triggers remain
+          focusable and do nothing, which is worse than absent.
+
+          So the block below does what `the-rooms` does, in the same shape and
+          for the same two reasons:
+
+          - It withdraws the tab set. The `<style>` is scoped to
+            `.ledger-tabs` and lives here rather than in the root layout's
+            NO_SCRIPT_CSS, because that block's job is flattening Framer
+            entrance states and is pinned by guard G9, while withdrawing one
+            section's dead controls is this section's decision alone.
+
+          - It prints all five stints, so the section's own data is its
+            fallback. Rendering the panels unconditionally instead would print
+            every stint twice whenever scripting is on.
+
+          The accumulation column above is untouched: it is a Counter, and a
+          Counter seeds the DOM with its final value, so the running total was
+          already correct without JS. */}
+      <noscript>
+        <style
+          dangerouslySetInnerHTML={{
+            __html: ".ledger-tabs{display:none!important}",
+          }}
+        />
+        <div className="mx-auto max-w-6xl border-t border-rule px-5 pb-8 pt-6 sm:px-7">
+          {LEDGER.map((entry) => (
+            <LedgerPanel key={entry.id} entry={entry} />
+          ))}
+        </div>
+      </noscript>
     </section>
   );
 }

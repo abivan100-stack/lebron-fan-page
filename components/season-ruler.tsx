@@ -9,13 +9,13 @@ import {
   STATS_AS_OF,
   TEAM_SPANS,
   type Season,
-} from "@/lib/lebron-data";
+} from "@/lib/data";
 import { EASE_PAINT, EASE_SETTLE, VIEWPORT_SOON } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-import { Caption, PaintRule, RiseWords } from "@/components/typeset";
+import { Caption, PaintRule, RiseWords, type Opener } from "@/components/typeset";
 
 /**
- * The span. Twenty-two seasons on one line, with every championship, MVP and
+ * The span. Twenty-three seasons on one line, with every championship, MVP and
  * Olympic summer marked in place.
  *
  * This replaces the scrolling marquee the site used to open with. A marquee
@@ -40,17 +40,21 @@ function Marker({ season }: { season: Season }) {
       {season.olympic ? (
         <span
           aria-hidden
-          className="h-[7px] w-[7px] rounded-full"
+          className="h-[7px] w-[7px] rounded-none border border-rule"
           style={{
+            // Bronze was painted with `--muted`, a body-copy TEXT token, and
+            // the legend only ever showed a gold swatch, so a bronze season
+            // was indistinguishable from an unlabelled state. `--leather`
+            // is an actual paint token and is now in the legend.
             backgroundColor:
-              season.olympic.medal === "Gold" ? "var(--gold)" : "var(--muted)",
+              season.olympic.medal === "Gold" ? "var(--gold)" : "var(--leather)",
           }}
         />
       ) : null}
       {season.mvp ? (
         <span
           aria-hidden
-          className="h-[7px] w-[7px] rounded-full border-2 border-ochre"
+          className="h-[7px] w-[7px] rounded-none border-2 border-ochre"
         />
       ) : null}
       {season.title ? (
@@ -60,16 +64,66 @@ function Marker({ season }: { season: Season }) {
   );
 }
 
+/**
+ * Opener: `instrument` -- Heading, copy and season readout in the panel's top edge; the ruler is its face.
+ *
+ * Declared, not inferred: the test gate reads these in `app/page.tsx` order and fails if
+ * two adjacent units share one. See `Opener` in typeset.tsx and DESIGN-AUDIT.md F-01.
+ */
+export const OPENER: Opener = "instrument";
+
 export function SeasonRuler() {
   const [index, setIndex] = React.useState(SEASONS.length - 1);
   const itemRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
+  const rulerRef = React.useRef<HTMLDivElement>(null);
   const selected = SEASONS[index];
   const honours = honoursFor(selected);
 
   const move = (next: number) => {
     const clamped = Math.max(0, Math.min(SEASONS.length - 1, next));
     setIndex(clamped);
+    // Deliberately NOT `preventScroll: true`, unlike the other roving-tabindex
+    // controls on the page. Below `sm` the ruler is `overflow-x-auto`, so the
+    // selected season can sit outside the visible strip; the container's touch
+    // mapping above assumes arrow keys can scroll it back into view. The
+    // targets carry `scroll-clearance`, so the vertical scroll that focus()
+    // performs lands them below the header rather than flush against the top
+    // (F-05) — the two requirements are met by different mechanisms, so this
+    // site must not be made "uniform" with the others.
     itemRefs.current[clamped]?.focus();
+  };
+
+  /**
+   * Map a touch on the ruler to a season.
+   *
+   * The mapping has to be in CONTENT coordinates, not viewport coordinates.
+   * `getBoundingClientRect()` returns the VISIBLE box, and below `sm` this
+   * container is `overflow-x-auto` with a 24px minimum per target, so at a 375px
+   * viewport the content is ~596px wide in a ~281px window and `scrollLeft` can
+   * reach ~315px. Arrow-keying along the ruler scrolls the container (each arrow
+   * calls `move()`, which focuses the next button, and focus scrolls it into
+   * view), and from then on a plain `clientX - rect.left` reads as though the
+   * reader were at the start of the ruler: measured, tapping the first fully
+   * visible season selected index 0 while the reader was looking at index 11.
+   *
+   * `scrollWidth / SEASONS.length` rather than `rect.width / SEASONS.length` also
+   * covers the `sm` case, where the buttons are `flex-1` and the content is
+   * exactly the visible width.
+   */
+  const handleTouch = (e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.touches[0];
+    const el = rulerRef.current;
+    if (!touch || !el) return;
+    const rect = el.getBoundingClientRect();
+    const contentWidth = el.scrollWidth;
+    if (rect.width <= 0 || contentWidth <= 0) return;
+    const pitch = contentWidth / SEASONS.length;
+    const contentX = el.scrollLeft + (touch.clientX - rect.left);
+    const targetIndex = Math.min(
+      SEASONS.length - 1,
+      Math.max(0, Math.floor(contentX / pitch)),
+    );
+    setIndex(targetIndex);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -92,10 +146,17 @@ export function SeasonRuler() {
     <section
       id="span"
       aria-labelledby="span-heading"
-      className="floor-deep relative px-5 py-20 sm:px-8 sm:py-24 md:px-14"
+      className="scroll-clearance floor relative px-5 py-20 sm:px-8 sm:py-24 md:px-14"
     >
-      <div className="mx-auto max-w-6xl">
-        <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+      {/* Opener: instrument. The ruler is a control surface and the map for the
+          whole page, so it is set as one: the heading, the copy and the season
+          readout live in the panel's top edge and the ruler is its face. There
+          is no heading block above it. The ground moved from `floor-deep` to
+          `floor` so the inset reads as an inset — a maple-deep panel on a
+          maple-deep ground is invisible — and the panel uses exactly the
+          `bg-maple-deep/50` + `border-rule` inset AGENTS.md §1 prescribes. */}
+      <div className="mx-auto max-w-6xl rounded-none border border-rule bg-maple-deep/50">
+        <div className="flex flex-col gap-8 border-b border-rule px-5 py-7 sm:px-7 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h2
               id="span-heading"
@@ -140,7 +201,7 @@ export function SeasonRuler() {
                 ))
               ) : (
                 <li>
-                  <Caption className="text-muted/80">
+                  <Caption className="text-muted">
                     A season in the middle of it.
                   </Caption>
                 </li>
@@ -150,12 +211,21 @@ export function SeasonRuler() {
         </div>
 
         {/* --- the ruler ------------------------------------------------- */}
-        <div className="mt-14">
+        <div className="px-5 pb-7 pt-10 sm:px-7">
           <motion.div
+            ref={rulerRef}
             role="radiogroup"
-            aria-label="Seasons, 2003-04 to 2024-25. Choose a season to read what happened in it."
+            aria-label={`Seasons, ${SEASONS[0].label} to ${SEASONS[SEASONS.length - 1].label}. Choose a season to read what happened in it.`}
             onKeyDown={onKeyDown}
-            className="flex w-full items-end gap-[2px] sm:gap-[3px]"
+            onTouchStart={handleTouch}
+            onTouchMove={handleTouch}
+            // 23 `flex-1` buttons sharing the full width measured 12.14px each
+            // at a 375px viewport (pitch 14.13px), failing WCAG 2.2 SC 2.5.8
+            // Target Size (Minimum), and the spacing exception does not apply
+            // because 24px circles on adjacent targets would overlap. Below
+            // `sm` the ruler is given a horizontal scroll with a 24px minimum
+            // per target, so every season stays individually reachable.
+            className="flex w-full items-end gap-[2px] touch-pan-y select-none overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-visible sm:pb-0 sm:[scrollbar-width:auto] sm:[&::-webkit-scrollbar]:auto"
             initial="hidden"
             whileInView="show"
             viewport={{ once: true, amount: 0.25 }}
@@ -177,13 +247,25 @@ export function SeasonRuler() {
                   aria-checked={active}
                   tabIndex={active ? 0 : -1}
                   onClick={() => setIndex(i)}
+                  // No `onTouchStart` here. It was redundant with `onClick` --
+                  // a tap fires both -- and because the container's handler is
+                  // on an ancestor it ran in the BUBBLE phase, after this one,
+                  // and won. Two handlers for one tap, disagreeing, is the whole
+                  // defect; the container's is the one that has to understand
+                  // `scrollLeft`, so it is the one that stays.
                   onMouseEnter={() => setIndex(i)}
+                  onFocus={() => setIndex(i)}
                   aria-label={`${season.label}, ${season.team.club}${
                     honoursFor(season).length
                       ? `. ${honoursFor(season).join(". ")}`
                       : ""
                   }`}
-                  className="group flex flex-1 flex-col items-center outline-offset-2"
+                  /* `scroll-clearance` because these 23 targets are focusable
+                     and sit directly beneath a min-h-[92svh] hero: tabbing or
+                     arrowing onto one makes the browser scroll it into view, and
+                     without clearance it lands flush against the top of the
+                     viewport (F-05). */
+                  className="scroll-clearance group flex min-w-[24px] flex-1 flex-col items-center py-2 outline-offset-2 sm:min-w-0 sm:py-2.5"
                   variants={{
                     hidden: { opacity: 0 },
                     show: {
@@ -245,10 +327,13 @@ export function SeasonRuler() {
                   className="block h-[3px] w-full"
                   style={{ backgroundColor: team.floor }}
                 />
-                <Caption bold className="mt-2 block truncate text-wine">
+                <Caption
+                  bold
+                  className="mt-1.5 block truncate text-[0.6875rem] text-wine sm:mt-2 sm:text-[0.8125rem]"
+                >
                   {team.city}
                 </Caption>
-                <Caption className="block truncate text-muted">
+                <Caption className="block truncate text-[0.6875rem] text-muted sm:text-[0.8125rem]">
                   {team.from}
                   {"–"}
                   {team.to + 1}
@@ -267,20 +352,22 @@ export function SeasonRuler() {
                 {l.key === "mvp" ? (
                   <span
                     aria-hidden
-                    className="h-[9px] w-[9px] rounded-full border-2 border-ochre"
+                    className="h-[9px] w-[9px] rounded-none border-2 border-ochre"
                   />
                 ) : null}
                 {l.key === "olympic" ? (
-                  <span
-                    aria-hidden
-                    className="h-[9px] w-[9px] rounded-full bg-gold"
-                  />
+                  // Both medal colours are keyed, because the ruler draws
+                  // two: gold for a title, leather for a bronze.
+                  <span aria-hidden className="flex items-center gap-1.5">
+                    <span className="h-[9px] w-[9px] rounded-none bg-gold" />
+                    <span className="h-[9px] w-[9px] rounded-none border border-rule bg-leather" />
+                  </span>
                 ) : null}
                 <Caption className="text-muted">{l.text}</Caption>
               </li>
             ))}
             <li>
-              <Caption className="text-muted/80">
+              <Caption className="text-muted">
                 Through {STATS_AS_OF}.
               </Caption>
             </li>

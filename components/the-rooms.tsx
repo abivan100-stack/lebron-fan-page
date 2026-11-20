@@ -10,12 +10,33 @@ import {
   type MotionValue,
 } from "framer-motion";
 
-import { ROOMS, ROOMS_INTRO, type Room } from "@/lib/lebron-data";
+import { ROOMS, ROOMS_INTRO, type Room } from "@/lib/data";
 import { EASE_SETTLE, VIEWPORT_SOON } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
-import { Caption, RiseWords } from "@/components/typeset";
+import { Caption, RiseWords, type Opener } from "@/components/typeset";
 
 const N = ROOMS.length;
+const PINNED_HEIGHT = "420vh";
+const REST_RATIO = 0.35;
+
+/**
+ * Where room `i` sits along the pinned scroll, as a fraction of 0 to 1.
+ *
+ * ONE definition, because the section had two and they disagreed across a fifth
+ * of it. `RoomPanel` placed each panel at `(i + 0.5) / N` — deliberately 1/N
+ * rather than 1/(N-1), so every chapter gets an equal share of the pin and the
+ * first one's fade-in range is not entirely below zero — while `PinnedRooms`
+ * derived the floor colour, the PAINT, the active index and `goTo` from
+ * `i / (N-1)`.
+ *
+ * With N = 6, panel 0 rests across progress [0, 0.167] but `active` flips to 1 at
+ * 0.1, so for that stretch the Akron panel is at full opacity while the nav
+ * underline, the label colour and the `aria-live` region all name Cleveland.
+ * `round(v * (N-1))` becomes `round(v * N - 0.5)`, which is the same rounding
+ * against the centres the panels are actually drawn at.
+ */
+const roomSeg = 1 / N;
+const roomCenter = (i: number) => (i + 0.5) * roomSeg;
 
 /**
  * The rooms he has played in.
@@ -44,12 +65,18 @@ function RoomPanel({
   // middle of every transition. Here each panel sits still and legible for
   // most of its stretch, then leaves sideways while the floor is repainted
   // and the next one arrives — so nothing is ever read through anything else.
-  const seg = 1 / (N - 1);
-  const center = i * seg;
+  // `seg` is 1/N, not 1/(N-1), so every chapter gets an EQUAL share of the
+  // pin. With 1/(N-1) the first chapter's window was centred on progress 0 —
+  // the first reachable value — which put its entire fade-IN range below 0
+  // (unreachable, so Akron never slid in) and gave it half the scroll
+  // distance of every other chapter. The last chapter's exit range is
+  // likewise allowed to run past 1, which is unreachable by design.
+  const seg = roomSeg;
+  const center = roomCenter(i);
   const range = [
     center - seg * 0.5,
-    center - seg * 0.34,
-    center + seg * 0.34,
+    center - seg * REST_RATIO,
+    center + seg * REST_RATIO,
     center + seg * 0.5,
   ];
 
@@ -65,11 +92,15 @@ function RoomPanel({
   return (
     <motion.div
       aria-hidden={!active}
-      className="absolute inset-0 grid grid-cols-1 items-center gap-10 lg:grid-cols-[1fr_auto]"
+      className="absolute inset-0 grid grid-cols-1 items-center gap-10 lg:grid-cols-[minmax(0,1fr)_auto]"
       style={{ opacity, color: room.type }}
     >
       <motion.div className="max-w-2xl" style={{ x }}>
-        <Caption bold style={{ color: room.paint }}>
+        {/* Uses `room.type` (the chalk/white text token) rather than
+            `room.paint`: Miami's paint (#E8761E) measured 3.58:1 on its own
+            #7A1810 floor, below the 4.5:1 that 13px bold text requires. The
+            years label is small, so it takes the high-contrast token. */}
+        <Caption bold style={{ color: room.type }}>
           {room.years}
         </Caption>
         <h3
@@ -126,18 +157,21 @@ function PinnedRooms() {
     offset: ["start start", "end end"],
   });
   const progress = useSpring(scrollYProgress, {
-    stiffness: 90,
-    damping: 28,
-    mass: 0.5,
+    stiffness: 100,
+    damping: 24,
+    mass: 0.35,
   });
 
   // Each room's colour is held flat while you are in it and repainted
   // quickly at the handover, so the floor is never a muddy blend of two
-  // clubs' colours for half the section.
-  const seg = 1 / (N - 1);
+  // clubs' colours for half the section. Centred on `roomCenter`, the same
+  // place `RoomPanel` draws the chapter — previously this used 1/(N-1) while
+  // the panels used 1/N, so the floor changed hands while the previous
+  // chapter was still fully on screen.
+  const seg = roomSeg;
   const stops = ROOMS.flatMap((_, i) => [
-    i * seg - seg * 0.34,
-    i * seg + seg * 0.34,
+    roomCenter(i) - seg * REST_RATIO,
+    roomCenter(i) + seg * REST_RATIO,
   ]);
   const floor = useTransform(
     progress,
@@ -152,7 +186,8 @@ function PinnedRooms() {
 
   const [active, setActive] = React.useState(0);
   useMotionValueEvent(progress, "change", (v) => {
-    const idx = Math.max(0, Math.min(N - 1, Math.round(v * (N - 1))));
+    // Rounding against the panel CENTRES, not against i/(N-1). See `roomCenter`.
+    const idx = Math.max(0, Math.min(N - 1, Math.round(v * N - 0.5)));
     setActive((p) => (p === idx ? p : idx));
   });
 
@@ -161,11 +196,13 @@ function PinnedRooms() {
     if (!el) return;
     const top = el.getBoundingClientRect().top + window.scrollY;
     const dist = el.offsetHeight - window.innerHeight;
-    window.scrollTo({ top: top + (i / (N - 1)) * dist, behavior: "smooth" });
+    // To the room's centre, not to i/(N-1) — otherwise clicking the first nav
+    // item scrolls past it and lands on the second.
+    window.scrollTo({ top: top + roomCenter(i) * dist, behavior: "smooth" });
   }, []);
 
   return (
-    <div ref={ref} style={{ height: `${N * 100}vh` }} className="relative">
+    <div ref={ref} style={{ height: PINNED_HEIGHT }} className="relative">
       <div className="sticky top-0 h-[100svh] overflow-hidden">
         <motion.div
           className="absolute inset-0"
@@ -173,7 +210,13 @@ function PinnedRooms() {
         />
 
         <div className="relative z-10 mx-auto flex h-full max-w-6xl flex-col justify-center px-5 sm:px-8 md:px-14">
-          <div className="relative h-[64vh] overflow-hidden">
+          {/* Was a hard `h-[64vh] overflow-hidden`, which silently destroyed
+              body copy on any viewport shorter than ~714px — including the
+              ~660-700px a 1366x768 laptop actually has after browser chrome.
+              Content height is driven by `vw` clamps, not by viewport height,
+              so a fixed vh box cannot contain it. `min-h` + overflow-y lets
+              the panel scroll instead of truncating mid-sentence. */}
+          <div className="relative max-h-[86vh] min-h-[64vh] overflow-y-auto overscroll-contain">
             {ROOMS.map((room, i) => (
               <RoomPanel
                 key={room.id}
@@ -208,11 +251,15 @@ function PinnedRooms() {
                 }}
               />
               <span className="hidden sm:block">
+                {/* Stacking a 0.72-alpha `dim` colour with a further
+                    `opacity: 0.55` gave an effective alpha of ~0.40 and
+                    measured 2.33-3.37:1 on every floor — below AA for 13px.
+                    The full-opacity token carries the de-emphasis instead. */}
                 <Caption
                   className="truncate transition-opacity"
                   style={{
-                    color: ROOMS[active].dim,
-                    opacity: i === active ? 1 : 0.55,
+                    color: ROOMS[active].type,
+                    opacity: i === active ? 1 : 0.72,
                   }}
                 >
                   {room.name}
@@ -312,11 +359,19 @@ function StackedRoom({ room }: { room: Room }) {
   );
 }
 
+/**
+ * Opener: `device` -- Pinned scroll-linked chapters. Already the one structural departure on the page, and protected as such.
+ *
+ * Declared, not inferred: the test gate reads these in `app/page.tsx` order and fails if
+ * two adjacent units share one. See `Opener` in typeset.tsx and DESIGN-AUDIT.md F-01.
+ */
+export const OPENER: Opener = "device";
+
 export function TheRooms() {
   const reduce = usePrefersReducedMotion();
 
   return (
-    <section id="rooms" aria-labelledby="rooms-heading" className="relative">
+    <section id="rooms" aria-labelledby="rooms-heading" className="scroll-clearance relative">
       <div className="floor px-5 py-20 sm:px-8 sm:py-24 md:px-14">
         <div className="mx-auto max-w-6xl">
           <h2
@@ -346,7 +401,27 @@ export function TheRooms() {
         </div>
       ) : (
         <>
-          <div className="hidden lg:block">
+          {/* Both branches stay in the DOM. The stacked copy used to be the only
+              one rendered at desktop, so at desktop Framer had serialised the
+              five other pinned panels as `opacity: 0` and a visitor without JS
+              got one of six chapters and no way to reach the rest. Both copies
+              are now always present, and the <noscript> below decides which
+              copy a visitor without JS gets — see its note.
+
+              There is deliberately NO `aria-hidden` on either branch, and there
+              used to be one on the pinned wrapper — which is the branch that is
+              VISIBLE at desktop, holding the six room buttons. So at `lg` and
+              above the page was showing six focusable controls that were hidden
+              from the accessibility tree: a keyboard user tabbed into buttons
+              announced as nothing (WCAG 4.1.2, `aria-hidden-focus`). It cannot
+              simply be swapped for `inert` either, because the element was
+              marked hidden by mistake rather than deliberately.
+
+              Neither branch needs the attribute. `hidden` / `lg:hidden` is
+              `display: none`, which already removes a subtree from the tab order
+              and the accessibility tree, so the attribute was only ever
+              reachable-as-a-mistake. */}
+          <div className="rooms-stage hidden lg:block">
             <PinnedRooms />
           </div>
           <div className="lg:hidden">
@@ -356,6 +431,45 @@ export function TheRooms() {
           </div>
         </>
       )}
+      {/* With JS off this block is the section's only fallback, and it does
+          two jobs, because neither branch above can be trusted to render
+          without Framer (issue #33, both defects measured in a real browser
+          with scripting disabled before this note was written):
+
+          - It withdraws the pinned stage. The stage is a scroll-linked
+            cross-fade: Framer serialises all six panels at `opacity: 0`, the
+            root layout's no-JS rule (correctly) flattens that to 1, and the
+            result is six chapters printed on top of one another inside a 420vh
+            sticky region — five of the six carrying `aria-hidden="true"` on
+            text that is plainly on screen. Withdrawing the stage also takes
+            its six nav marks out of the tab order: they are `window.scrollTo`
+            buttons that cannot do anything without JS.
+
+          - It hands the chapters over by width. `hidden lg:block` is the exact
+            inverse of the stacked branch's `lg:hidden`: below `lg` the stacked
+            copy is already visible and the fallback stays out of the way (it
+            used to render unconditionally, which printed every chapter twice
+            on a phone); at `lg` and above it is the only copy, which is the
+            gap the stage used to fill.
+
+          The `<style>` lives here, not in the root layout's generic no-JS
+          block: that block's job is flattening Framer entrance states and it
+          is pinned by design guard G9, while this withdrawal is a decision of
+          this section alone. Asserted end-to-end by the no-JS e2e suite — six
+          chapters, once, at both widths, and no visible buttons in the
+          section. */}
+      <noscript>
+        <style
+          dangerouslySetInnerHTML={{
+            __html: ".rooms-stage{display:none!important}",
+          }}
+        />
+        <div className="hidden lg:block mx-auto max-w-6xl px-5 py-10 sm:px-8 md:px-14">
+          {ROOMS.map((room) => (
+            <StackedRoom key={room.id} room={room} />
+          ))}
+        </div>
+      </noscript>
     </section>
   );
 }

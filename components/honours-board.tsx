@@ -9,9 +9,9 @@ import {
   NEXT_MARK,
   STATS_AS_OF,
   type Honour,
-} from "@/lib/lebron-data";
+} from "@/lib/data";
 import { EASE_PAINT, EASE_SETTLE, VIEWPORT_SOON } from "@/lib/motion";
-import { Caption, Counter, PaintRule, RiseWords } from "@/components/typeset";
+import { Caption, Counter, PaintRule, RiseWords, type Opener } from "@/components/typeset";
 
 /**
  * Hardware — the honours ledger.
@@ -25,7 +25,7 @@ import { Caption, Counter, PaintRule, RiseWords } from "@/components/typeset";
 function LedgerRow({ honour, index }: { honour: Honour; index: number }) {
   return (
     <motion.div
-      className="grid grid-cols-1 gap-x-8 gap-y-2 py-7 sm:grid-cols-[minmax(5rem,8rem)_1fr] sm:py-9"
+      className="grid grid-cols-1 gap-x-8 gap-y-2 py-7 sm:grid-cols-[minmax(5rem,8rem)_minmax(0,1fr)] sm:py-9"
       initial="hidden"
       whileInView="show"
       viewport={VIEWPORT_SOON}
@@ -52,7 +52,11 @@ function LedgerRow({ honour, index }: { honour: Honour; index: number }) {
           <Counter
             to={honour.value}
             suffix={honour.suffix ?? ""}
-            duration={1.6 + index * 0.1}
+            duration={
+              honour.value <= 10
+                ? 0.6 + index * 0.04
+                : 1.6 + index * 0.1
+            }
           />
         )}
       </motion.div>
@@ -170,6 +174,14 @@ function NextMark() {
   );
 }
 
+/**
+ * Opener: `ruled-ledger` -- Heading set as the ledger's masthead on the first rule, standfirst beside it.
+ *
+ * Declared, not inferred: the test gate reads these in `app/page.tsx` order and fails if
+ * two adjacent units share one. See `Opener` in typeset.tsx and DESIGN-AUDIT.md F-01.
+ */
+export const OPENER: Opener = "ruled-ledger";
+
 export function HonoursBoard() {
   // Order comes straight from the data, which alternates deliberately:
   // three ruled rows, the points block, two rows, the scoring block.
@@ -177,28 +189,39 @@ export function HonoursBoard() {
     <section
       id="hardware"
       aria-labelledby="hardware-heading"
-      className="floor relative py-20 sm:py-28"
+      className="scroll-clearance floor relative py-20 sm:py-28"
     >
+      {/* Opener: ruled-ledger. This section is already typeset as a ledger —
+          figure against description, ruled off row by row — so the heading is
+          set as the ledger's masthead, sitting on the first rule with the
+          standfirst beside it, rather than stacked above the ledger as a
+          monument with a paragraph under it. The masthead carries no rule of
+          its own: the first LedgerRow's PaintRule is the rule it sits on.
+          `headline` rather than `monument`, because the ledger's figures are
+          this section's display element and four colossal titles on the page
+          flattened the hierarchy (F-01). */}
       <div className="mx-auto max-w-6xl px-5 sm:px-8 md:px-14">
-        <h2
-          id="hardware-heading"
-          className="monument text-wine"
-          style={{ fontSize: "clamp(3rem, 11vw, 8rem)" }}
-        >
-          <RiseWords text={HARDWARE.heading} />
-        </h2>
-        <motion.p
-          className="prose-copy mt-6 max-w-[46ch] text-[1.0625rem] text-muted sm:text-lg"
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={VIEWPORT_SOON}
-          transition={{ duration: 0.8, ease: EASE_SETTLE, delay: 0.25 }}
-        >
-          {HARDWARE.standfirst}
-        </motion.p>
+        <div className="flex flex-col gap-4 pb-6 sm:flex-row sm:items-end sm:justify-between sm:gap-10">
+          <h2
+            id="hardware-heading"
+            className="headline shrink-0 text-wine"
+            style={{ fontSize: "clamp(2.25rem, 6vw, 4.5rem)" }}
+          >
+            <RiseWords text={HARDWARE.heading} />
+          </h2>
+          <motion.p
+            className="prose-copy max-w-[46ch] text-[1.0625rem] text-muted sm:text-lg"
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={VIEWPORT_SOON}
+            transition={{ duration: 0.8, ease: EASE_SETTLE, delay: 0.25 }}
+          >
+            {HARDWARE.standfirst}
+          </motion.p>
+        </div>
       </div>
 
-      <div className="mt-12">
+      <div className="mt-0">
         {HONOURS.map((honour, i) =>
           honour.weight === "block" ? (
             <PaintBlock key={honour.id} honour={honour} />

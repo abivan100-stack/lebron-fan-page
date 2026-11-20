@@ -7,15 +7,14 @@ import {
   motion,
   useAnimationFrame,
   useMotionValue,
-  useReducedMotion,
   useTransform,
 } from "framer-motion";
 
-import { SHOT } from "@/lib/lebron-data";
+import { SHOT } from "@/lib/data";
 import { EASE_PAINT, EASE_SETTLE, VIEWPORT_SOON } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { cn } from "@/lib/utils";
-import { Caption, PaintRule, RiseWords } from "@/components/typeset";
+import { Caption, PaintRule, RiseWords, type Opener } from "@/components/typeset";
 import { SoundToggle } from "@/components/sound-toggle";
 import { useSound } from "@/components/sound-provider";
 
@@ -35,7 +34,14 @@ function readBest() {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return 0;
     const parsed = JSON.parse(raw) as { best?: number };
-    return typeof parsed.best === "number" ? parsed.best : 0;
+    // Validate the DOMAIN as well as the type: a hand-edited or half-written
+    // value used to render verbatim, so `{"best":-5}` displayed -5 in the
+    // BEST STREAK tile and `{"best":3.7}` displayed 3.7.
+    return typeof parsed.best === "number" &&
+      Number.isInteger(parsed.best) &&
+      parsed.best >= 0
+      ? parsed.best
+      : 0;
   } catch {
     return 0;
   }
@@ -82,20 +88,35 @@ function Readout({
   );
 }
 
+/**
+ * Opener: `instrument` -- Heading, copy and sound toggle in the panel's top edge; the court is the face.
+ *
+ * Declared, not inferred: the test gate reads these in `app/page.tsx` order and fails if
+ * two adjacent units share one. See `Opener` in typeset.tsx and DESIGN-AUDIT.md F-01.
+ */
+export const OPENER: Opener = "instrument";
+
 export function LastShot() {
-  const reduce = useReducedMotion();
-  // Structural branching needs the SSR-safe hook: framer's own reads the
-  // media query during the first client render, which would render a
-  // different tree than the server did.
-  const reduceLayout = usePrefersReducedMotion();
+  /* One hook, from this repo, for both jobs. This was two: framer's
+     `useReducedMotion` for the shot duration and animation branch, and the
+     repo's SSR-safe `usePrefersReducedMotion` for the structural branch at the
+     bottom. That split bought nothing and cost the live subscription — framer's
+     is a one-shot read, so `reduce` could not change after first paint, which is
+     exactly the case the duration and the `if (!reduce)` branch are about. The
+     comment claiming framer's was needed to avoid a first-render media-query
+     read argues for the repo's hook, which is the one built for it. */
+  const reduce = usePrefersReducedMotion();
   const { play } = useSound();
 
   const [phase, setPhase] = React.useState<Phase>("ready");
   const phaseRef = React.useRef<Phase>("ready");
-  const setPhaseSync = (p: Phase) => {
+  // Wrapped so the two `useCallback`s that call it can list it as a
+  // dependency. It closes over nothing unstable (a ref and a setState), so
+  // the identity is stable for the component's lifetime.
+  const setPhaseSync = React.useCallback((p: Phase) => {
     phaseRef.current = p;
     setPhase(p);
-  };
+  }, []);
 
   // Session counters live in refs; a small display state drives the animated
   // readouts. Personal best is external (localStorage) state.
@@ -113,6 +134,30 @@ export function LastShot() {
   const courtRef = React.useRef<HTMLDivElement>(null);
   const timers = React.useRef<number[]>([]);
   const resultTimer = React.useRef<number | null>(null);
+  /**
+   * The in-flight `animate()` controls for the current shot.
+   *
+   * These four animations were previously started and their handles discarded,
+   * while the two `onComplete` callbacks call `finish()` — which does four
+   * setStates, a `localStorage` write and a `window.dispatchEvent`. Nothing
+   * stopped them, so unmounting inside the 0.9s window (0.35s under reduced
+   * motion) ran all of that against a dead fiber. The component already had a
+   * cleanup discipline for `setTimeout` and `the-block` cancels its rAF in both
+   * branches; this closes the one gap in it.
+   *
+   * Verdict on a related observation, recorded so it is not "fixed" later:
+   * `timers.current` only ever grows, by two ids per shot. It is read inside the
+   * unmount cleanup precisely so the cleanup sees the whole accumulated list,
+   * and the growth is a few hundred small integers over a whole visit of a fan
+   * page. Pruning it would add bookkeeping to chase nothing.
+   */
+  const flight = React.useRef<{ stop: () => void }[]>([]);
+
+  /** Stop anything in flight and forget it, so `onComplete` cannot fire later. */
+  const clearFlight = React.useCallback(() => {
+    for (const controls of flight.current) controls.stop();
+    flight.current = [];
+  }, []);
 
   // Motion values
   const power = useMotionValue(0);
@@ -124,14 +169,20 @@ export function LastShot() {
   const ballScale = useMotionValue(1);
 
   const markerBottom = useTransform(power, (v) => `${v}%`);
+  const courtMarkerBg = useTransform(power, (v) =>
+    Math.abs(v - BAND.center) <= BAND.half ? "var(--wine-deep)" : "var(--chalk)",
+  );
   const aimLeft = useTransform(aim, (v) => `${50 + v * 34}%`);
   const ballLeft = useTransform(ballX, (v) => `${v}%`);
   const ballTop = useTransform(ballY, (v) => `${v}%`);
 
   React.useEffect(() => {
     const list = timers.current;
-    return () => list.forEach((t) => window.clearTimeout(t));
-  }, []);
+    return () => {
+      list.forEach((t) => window.clearTimeout(t));
+      clearFlight();
+    };
+  }, [clearFlight]);
 
   // Oscillate the power meter while ready
   useAnimationFrame((_, delta) => {
@@ -193,6 +244,7 @@ export function LastShot() {
         ballX.set(ORIGIN.x);
         ballY.set(ORIGIN.y);
         ballRotate.set(0);
+        ballScale.set(1);
         setPhaseSync("ready");
       }, 900);
 
@@ -207,7 +259,7 @@ export function LastShot() {
       resultTimer.current = t2;
       timers.current.push(t1, t2);
     },
-    [ballRotate, ballScale, ballX, ballY, play],
+    [ballRotate, ballScale, ballX, ballY, play, setPhaseSync],
   );
 
   const shoot = React.useCallback(() => {
@@ -226,18 +278,25 @@ export function LastShot() {
 
     setPhaseSync("flying");
     const dur = reduce ? 0.35 : 0.9;
+    // A second shot replaces the first, so the previous flight's callbacks are
+    // cancelled before the new ones are registered.
+    clearFlight();
 
     if (made) {
-      animate(ballX, [ORIGIN.x, HOOP.x + a * 6, HOOP.x], {
-        duration: dur,
-        ease: "easeOut",
-      });
-      animate(ballY, [ORIGIN.y, 6, HOOP.y], {
-        duration: dur,
-        times: [0, 0.55, 1],
-        ease: "easeOut",
-        onComplete: () => finish(true, label),
-      });
+      flight.current.push(
+        animate(ballX, [ORIGIN.x, HOOP.x + a * 6, HOOP.x], {
+          duration: dur,
+          ease: "easeOut",
+        }),
+      );
+      flight.current.push(
+        animate(ballY, [ORIGIN.y, 6, HOOP.y], {
+          duration: dur,
+          times: [0, 0.55, 1],
+          ease: "easeOut",
+          onComplete: () => finish(true, label),
+        }),
+      );
     } else {
       let mx: number;
       let my: number;
@@ -251,24 +310,30 @@ export function LastShot() {
         mx = HOOP.x + a * 8;
         my = 42;
       }
-      animate(ballX, [ORIGIN.x, (ORIGIN.x + mx) / 2 + a * 10, mx], {
-        duration: dur,
-        ease: "easeOut",
-      });
-      animate(ballY, [ORIGIN.y, 8, my], {
-        duration: dur,
-        times: [0, 0.5, 1],
-        ease: "easeOut",
-        onComplete: () => finish(false, label),
-      });
+      flight.current.push(
+        animate(ballX, [ORIGIN.x, (ORIGIN.x + mx) / 2 + a * 10, mx], {
+          duration: dur,
+          ease: "easeOut",
+        }),
+      );
+      flight.current.push(
+        animate(ballY, [ORIGIN.y, 8, my], {
+          duration: dur,
+          times: [0, 0.5, 1],
+          ease: "easeOut",
+          onComplete: () => finish(false, label),
+        }),
+      );
     }
     if (!reduce) {
-      animate(ballRotate, ballRotate.get() + 720, {
-        duration: dur,
-        ease: "linear",
-      });
+      flight.current.push(
+        animate(ballRotate, ballRotate.get() + 720, {
+          duration: dur,
+          ease: "linear",
+        }),
+      );
     }
-  }, [aim, ballRotate, ballX, ballY, finish, power, reduce]);
+  }, [aim, ballRotate, ballX, ballY, clearFlight, finish, power, reduce, setPhaseSync]);
 
   const handlePointer = (e: React.PointerEvent) => {
     const el = courtRef.current;
@@ -295,14 +360,18 @@ export function LastShot() {
     <section
       id="shot"
       aria-labelledby="shot-heading"
-      className="floor relative px-5 py-20 sm:px-8 sm:py-28 md:px-14"
+      className="scroll-clearance floor relative px-5 py-20 sm:px-8 sm:py-28 md:px-14"
     >
-      <div className="mx-auto max-w-6xl">
-        <div className="flex flex-wrap items-end justify-between gap-6">
+      {/* Opener: instrument. The shot challenge is the mechanism, so the court
+          is the first thing on screen and the heading, the copy and the sound
+          toggle are the panel's top edge rather than a block above it. Heading
+          demoted from `monument` to `headline` (F-01). */}
+      <div className="mx-auto max-w-6xl rounded-none border border-rule bg-maple-deep/50">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-b border-rule px-5 py-6 sm:px-7">
           <h2
             id="shot-heading"
-            className="monument max-w-[12ch] text-wine"
-            style={{ fontSize: "clamp(2.5rem, 8vw, 6rem)" }}
+            className="headline max-w-[14ch] text-wine"
+            style={{ fontSize: "clamp(2rem, 5vw, 3.75rem)" }}
           >
             <RiseWords text={SHOT.heading} />
           </h2>
@@ -310,7 +379,7 @@ export function LastShot() {
         </div>
 
         <motion.p
-          className="prose-copy mt-6 max-w-[46ch] text-[1.0625rem] text-muted sm:text-lg"
+          className="prose-copy max-w-[46ch] px-5 pt-6 text-[1.0625rem] text-muted sm:px-7 sm:text-lg"
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={VIEWPORT_SOON}
@@ -319,13 +388,15 @@ export function LastShot() {
           {SHOT.copy}
         </motion.p>
 
-        <div className="mt-14 grid grid-cols-1 gap-10 lg:grid-cols-[1.45fr_1fr]">
+        <div className="px-5 pb-8 pt-8 sm:px-7">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
           {/* THE COURT — chalk lines on painted floor. Revealed by pulling a
               maple cover off it rather than by transforming the panel itself,
               so the court markings never distort and the panel is the right
               size for pointer maths from the first frame. */}
           <div
             ref={courtRef}
+            id="shot-court"
             role="group"
             aria-label="Shot challenge court. Use left and right arrows to aim, space or enter to shoot."
             tabIndex={0}
@@ -371,7 +442,7 @@ export function LastShot() {
                 transition={{ duration: 0.5 }}
               />
               <div
-                className="mx-auto -mt-4 h-2 w-9 rounded-[50%] border-2"
+                className="mx-auto -mt-4 h-2 w-9 rounded-none border-2"
                 style={{ borderColor: "var(--gold)" }}
               />
             </div>
@@ -389,7 +460,9 @@ export function LastShot() {
               }}
             />
 
-            {/* the ball */}
+            {/* the ball. One of four rounded-full shapes on the page, and the
+             * four all encode a genuinely round object -- a ball is round. The
+             * budget and the survivor list are asserted by the test gate (F-08). */}
             <motion.div
               aria-hidden
               className="pointer-events-none absolute z-10 flex h-9 w-9 items-center justify-center rounded-full bg-leather sm:h-10 sm:w-10"
@@ -435,6 +508,10 @@ export function LastShot() {
               {result?.made ? (
                 <motion.div
                   key={`ring-${result.id}`}
+                  /* The made-shot ring. Survives the square commitment: a shot
+                   * ring is round, like a ball. One of four rounded-full shapes
+                   * on the page; the budget and the survivor list are asserted
+                   * by the test gate (F-08). */
                   className="pointer-events-none absolute left-1/2 top-[22%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-gold"
                   initial={{ width: 10, height: 10, opacity: 0.9 }}
                   animate={{ width: 170, height: 170, opacity: 0 }}
@@ -444,12 +521,75 @@ export function LastShot() {
               ) : null}
             </AnimatePresence>
 
+            {/* on-court release timing gauge: keeps timing meter directly in the
+                court viewport so desktop players avoid split-attention and mobile
+                players see the oscillating release meter without scrolling down */}
+            <div
+              className="pointer-events-none absolute right-3 top-3.5 z-10 flex flex-col items-center sm:right-5 sm:top-5"
+              aria-hidden
+            >
+              <Caption className="mb-1 text-[0.625rem] tracking-wider text-chalk/75 uppercase sm:text-[0.6875rem]">
+                Release
+              </Caption>
+              <div className="relative h-36 w-3.5 border border-chalk/30 bg-wine-deep/90 sm:h-48 sm:w-4">
+                {/* sweet-spot target zone */}
+                <div
+                  className="absolute inset-x-0 bg-gold"
+                  style={{
+                    bottom: `${BAND.center - BAND.half}%`,
+                    height: `${BAND.half * 2}%`,
+                  }}
+                />
+                {/* target zone boundary marks */}
+                <span
+                  className="absolute -left-1 w-1 border-t border-gold"
+                  style={{ bottom: `${BAND.center + BAND.half}%` }}
+                />
+                <span
+                  className="absolute -left-1 w-1 border-b border-gold"
+                  style={{ bottom: `${BAND.center - BAND.half}%` }}
+                />
+                <span
+                  className="absolute -right-1 w-1 border-t border-gold"
+                  style={{ bottom: `${BAND.center + BAND.half}%` }}
+                />
+                <span
+                  className="absolute -right-1 w-1 border-b border-gold"
+                  style={{ bottom: `${BAND.center - BAND.half}%` }}
+                />
+                {/* oscillating indicator marker */}
+                <motion.div
+                  className="absolute inset-x-0 h-[3px]"
+                  style={{
+                    bottom: markerBottom,
+                    backgroundColor: courtMarkerBg,
+                  }}
+                />
+              </div>
+              <Caption className="mt-1 text-[0.5625rem] tracking-wider text-gold/90 uppercase sm:text-[0.625rem]">
+                Gold
+              </Caption>
+            </div>
+
             {/* The cover, pulled off to the right. Not rendered at all under
                 reduced motion: a cover that depends on an animation running
-                is a cover that can leave the court hidden. */}
-            {reduceLayout ? null : (
+                is a cover that can leave the court hidden.
+
+                `data-cover` is the no-JS half of that sentence. The
+                `reduce ? null` branch cannot reach a visitor who has simply
+                got JavaScript turned off, and such a visitor gets the cover
+                exactly as the server rendered it — `transform:none`, because
+                Framer serialises `scaleX: 1` as the identity — which is a full
+                624x499 sheet of opaque maple over the entire half-court. CSS
+                cannot rescue that from a transform rule, since for an opaque
+                overlay the untransformed state IS the covered state. So the
+                cover opts out through `NO_SCRIPT_CSS` in app/layout.tsx, which
+                removes it outright rather than trying to animate it away.
+                Guarded by G12. */}
+            {reduce ? null : (
               <motion.span
                 aria-hidden
+                data-cover=""
                 className="pointer-events-none absolute inset-0 z-20 origin-right bg-maple"
                 initial={{ scaleX: 1 }}
                 whileInView={{ scaleX: 0 }}
@@ -495,8 +635,9 @@ export function LastShot() {
                     Release
                   </Caption>
                   <p className="prose-copy mt-2 text-[0.9375rem] text-muted">
-                    Let it go inside the gold. Too low and it falls short, too
-                    high and it runs long.
+                    Let it go inside the gold. Time your shot using the on-court
+                    meter or the gauge here. Too low and it falls short, too high
+                    and it runs long.
                   </p>
                 </div>
                 <button
@@ -533,6 +674,7 @@ export function LastShot() {
         <p aria-live="polite" className="sr-only">
           {announce}
         </p>
+        </div>
       </div>
     </section>
   );

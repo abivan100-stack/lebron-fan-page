@@ -4,10 +4,15 @@ import { SeasonRuler } from "@/components/season-ruler";
 import { HonoursBoard } from "@/components/honours-board";
 import { TheLine } from "@/components/the-line";
 import { TheRooms } from "@/components/the-rooms";
+import { FatherAndSon } from "@/components/father-and-son";
 import { TheLedger } from "@/components/the-ledger";
+import { ShotZones } from "@/components/shot-zones";
+import { PlayoffMatrix } from "@/components/playoff-matrix";
+import { EraCompare } from "@/components/era-compare";
 import { TwentyThree } from "@/components/twenty-three";
 import { LastShot } from "@/components/last-shot";
 import { FourNights } from "@/components/four-nights";
+import { TheBlock } from "@/components/the-block";
 import { Baseline } from "@/components/baseline";
 
 export default function Page() {
@@ -18,10 +23,15 @@ export default function Page() {
       <HonoursBoard />
       <TheLine />
       <TheRooms />
+      <FatherAndSon />
       <TheLedger />
+      <ShotZones />
+      <PlayoffMatrix />
+      <EraCompare />
       <TwentyThree />
       <LastShot />
       <FourNights />
+      <TheBlock />
       <Baseline />
     </CourtShell>
   );

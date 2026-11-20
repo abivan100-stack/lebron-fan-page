@@ -5,11 +5,11 @@ import {
   animate,
   motion,
   useInView,
-  useReducedMotion,
   type Variants,
 } from "framer-motion";
 
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import {
   DUR,
   EASE_PAINT,
@@ -34,7 +34,7 @@ function formatNumber(value: number, decimals: number): string {
 export function Counter({
   to,
   from = 0,
-  duration = 1.8,
+  duration,
   decimals = 0,
   prefix = "",
   suffix = "",
@@ -50,10 +50,27 @@ export function Counter({
 }) {
   const ref = React.useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, VIEWPORT);
-  const reduce = useReducedMotion();
+  /* The repo's `usePrefersReducedMotion`, NOT Framer's `useReducedMotion`.
+     Framer's is a one-shot read, not a subscription — its own source carries a
+     TODO about it — so the value is frozen at first render and never re-renders
+     the component. That made the `reduce` dep below inert, which in turn made
+     the mid-count branch unreachable: it could only ever be taken if the
+     preference was already set at first paint, so the comment promising to
+     handle a preference "flipped on while counting" described behaviour that
+     could not happen. This hook is a `useSyncExternalStore` over `matchMedia`,
+     so the flip is real. `center-court`, `the-rooms` and `last-shot` already
+     used it. */
+  const reduce = usePrefersReducedMotion();
   const started = React.useRef(false);
   const controlsRef = React.useRef<{ stop: () => void } | null>(null);
-  const countKey = `${to}:${from}:${duration}:${decimals}`;
+
+  // Small integer targets (<= 10) scale to snappy 0.6s–0.8s so counting
+  // to 3 or 4 feels crisp instead of sluggish.
+  const animDuration =
+    duration ??
+    (to <= 10 ? Math.max(0.6, Math.min(0.8, 0.5 + to * 0.05)) : 1.8);
+
+  const countKey = `${to}:${from}:${animDuration}:${decimals}`;
   const countKeyRef = React.useRef(countKey);
 
   React.useEffect(() => {
@@ -83,20 +100,35 @@ export function Counter({
     started.current = true;
 
     const controls = animate(from, to, {
-      duration,
+      duration: animDuration,
       ease: EASE_SETTLE,
       onUpdate: (v) => {
         node.textContent = formatNumber(v, decimals);
       },
+      // Without this an interrupted count freezes on whatever intermediate
+      // value it had reached and the cleanup below retains it, so the figure
+      // stays wrong permanently rather than merely un-animated.
+      onComplete: () => {
+        node.textContent = formatNumber(to, decimals);
+      },
     });
     controlsRef.current = controls;
-    return () => controls.stop();
-  }, [inView, to, from, duration, decimals, reduce, countKey]);
+    return () => {
+      controls.stop();
+      // Guarantee the final value survives any stop, mid-flight or not.
+      if (node.isConnected) node.textContent = formatNumber(to, decimals);
+    };
+  }, [inView, to, from, animDuration, decimals, reduce, countKey]);
 
   return (
-    <span className={className}>
+    <span className={cn(className)}>
       {prefix}
-      <span ref={ref}>{formatNumber(from, decimals)}</span>
+      {/* The server has no IntersectionObserver and no animation clock, so
+          the value it can honestly render is the FINAL one. Seeding this with
+          `from` shipped every statistic on the page as a literal 0 to any
+          client without JS. The count still animates from `from` once
+          hydrated, because the effect writes to this same node. */}
+      <span ref={ref}>{formatNumber(to, decimals)}</span>
       {suffix}
     </span>
   );
@@ -125,6 +157,7 @@ export function RiseLine({
   const Wrapper = as === "div" ? motion.div : motion.span;
   return (
     <Wrapper
+      data-reveal=""
       className={cn("inline-flex overflow-hidden", className)}
       style={{ paddingBottom: "0.1em" }}
       initial="hidden"
@@ -173,6 +206,7 @@ export function RiseWords({
       <span className="sr-only">{text}</span>
       <motion.span
         aria-hidden
+        data-reveal=""
         className={cn("inline-flex flex-wrap", className)}
         variants={container}
         initial="hidden"
@@ -220,7 +254,12 @@ export function PaintedName({
   style?: React.CSSProperties;
 }) {
   return (
-    <span aria-hidden className={cn("inline-flex", className)} style={style}>
+    <span
+      aria-hidden
+      data-reveal=""
+      className={cn("inline-flex", className)}
+      style={style}
+    >
       {Array.from(word).map((c, i) => (
         <span
           key={i}
@@ -267,6 +306,7 @@ export function PaintRule({
   return (
     <motion.span
       aria-hidden
+      data-reveal=""
       className={cn("block w-full", className)}
       style={{
         height: thickness,
@@ -310,5 +350,199 @@ export function Caption({
     >
       {children}
     </Tag>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Opener — the shape a section opens with.
+ *
+ * The page originally ran one structural rhythm thirteen times: eyebrow, huge
+ * condensed headline, standfirst, four-item band. A reader could predict every
+ * remaining section from the one before it, which is the single largest reason
+ * the page read as generated (DESIGN-AUDIT.md F-01).
+ *
+ * Each top-level unit therefore declares which of five openers it uses, and the
+ * test gate asserts that no two ADJACENT units in `app/page.tsx` declare the
+ * same one. Silhouette is not machine-checkable, so the declared value is the
+ * honest proxy: it forces the intent to be written down, and reordering the page
+ * without reconsidering the rhythm fails the gate.
+ *
+ *   device       — no heading block; the mechanism IS the opener (the court,
+ *                  the pinned chapters, the colossal numeral, the scrubber)
+ *   ruled-ledger — display heading on a rule; body is a ruled list, no frames
+ *   written-line — the heading IS the content, one line at display scale
+ *   margin-note  — heading in a narrow left column, body running beside it
+ *   instrument   — dense bordered panel, controls in its top edge, no heading
+ * ------------------------------------------------------------------------ */
+
+export type Opener =
+  | "device"
+  | "ruled-ledger"
+  | "written-line"
+  | "margin-note"
+  | "instrument";
+
+/* There is deliberately no `OPENERS` runtime array alongside this union. It was
+   exported when the archetypes were introduced and consumed by nothing; the
+   one place that needs the list at runtime is guard G4 in
+   `tests/design-guards.test.ts`, which cannot import a `.tsx` and therefore
+   spells the five out itself, next to the assertion that uses them. A const
+   array here would be a third copy of the same list with no reader. */
+
+/* -------------------------------------------------------------------------
+ * Kicker — the replacement for the tracked all-caps eyebrow.
+ *
+ * `AGENTS.md` §1 bans "tracked-out all-caps eyebrows with middle dots". The
+ * eyebrow pattern was nine sites; four were redundant labels for the heading
+ * beneath them and were deleted, and five carry real information (the hero's
+ * scroll affordance, and era-compare's four metric-group labels).
+ *
+ * This is what those five use. It is deliberately NOT built on `.narrow`:
+ * `.narrow` is uppercase with 0.04em tracking, so a "restyled" kicker that kept
+ * it would satisfy a grep for the tracking utilities while looking exactly the
+ * same on screen. Body face, body size, sentence case, no tracking override, no
+ * separator glyph.
+ * ------------------------------------------------------------------------ */
+
+export function Kicker({
+  children,
+  className,
+  as: Tag = "p",
+}: {
+  children: React.ReactNode;
+  className?: string;
+  as?: "span" | "p" | "div";
+}) {
+  return (
+    <Tag className={cn("text-[0.9375rem] leading-snug text-muted", className)}>
+      {children}
+    </Tag>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * StatBand — the four-item band, as one component.
+ *
+ * This existed inline at seven sites, which is how a page ends up with the same
+ * container for everything (F-01). Extracting it makes the cap mechanical: the
+ * test gate asserts `<StatBand` appears at most twice on the page, so the band
+ * can no longer quietly become the default container for a new section.
+ *
+ * Two presentations, because the two surviving uses genuinely differ:
+ *   framed — each item is an inset panel. The scoreboard read.
+ *   ruled  — one hairline top and bottom, items divided by verticals. The
+ *            line-score read, on a painted ground where frames would fight it.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * One item in a `StatBand`.
+ *
+ * Only the fields a call site actually passes are here. `valueClassName`,
+ * `captionClassName` and `itemClassName` existed when this was written and were
+ * never used at either of the two call sites, so they were removed rather than
+ * left as an API nobody exercises. `labelClassName` earns its place: the block's
+ * telemetry sits on paint and needs a chalk token its parent cannot supply.
+ *
+ * Adding a field here is a claim that something needs it. If nothing does, it is
+ * a second way to say the same thing, and the next reader cannot tell which is
+ * authoritative.
+ */
+interface StatBandItem {
+  label: string;
+  value: React.ReactNode;
+  caption?: React.ReactNode;
+  /**
+   * `gold` for a figure that is a highlight rather than a total, and `gold-ink`
+   * for the same highlight on a maple-family ground.
+   *
+   * The two are not interchangeable and the error is invisible until measured:
+   * `--gold` is 1.36:1 on a maple-deep inset and `--gold-ink` is far worse than
+   * it on wine. A band's ground is decided by its call site, not by the
+   * primitive, so the tone is named rather than inferred.
+   */
+  tone?: "wine" | "gold" | "gold-ink";
+  /** Overrides the item's label colour, e.g. to a chalk token on paint. */
+  labelClassName?: string;
+}
+
+export function StatBand({
+  items,
+  variant = "framed",
+  className,
+  itemClassName,
+}: {
+  items: readonly StatBandItem[];
+  variant?: "framed" | "ruled";
+  className?: string;
+  itemClassName?: string;
+}) {
+  if (variant === "ruled") {
+    return (
+      <div
+        className={cn(
+          "grid grid-cols-2 gap-x-6 gap-y-8 border-y border-rule-chalk py-6 sm:grid-cols-4",
+          className,
+        )}
+      >
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className={cn("flex flex-col gap-1", itemClassName)}
+          >
+            <span
+              className={cn(
+                "figure text-[2.25rem] sm:text-[3rem]",
+                item.tone === "gold"
+        ? "text-gold"
+        : item.tone === "gold-ink"
+          ? "text-gold-ink"
+          : "text-wine",
+              )}
+            >
+              {item.value}
+            </span>
+            <Caption className={item.labelClassName}>{item.label}</Caption>
+            {item.caption ? (
+              <Caption className="mt-0.5">{item.caption}</Caption>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4",
+        className,
+      )}
+    >
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className={cn(
+            "rounded-none border border-rule bg-maple-deep/40 p-4 backdrop-blur-xs",
+            itemClassName,
+          )}
+        >
+          <Caption bold className={cn("block text-muted", item.labelClassName)}>
+            {item.label}
+          </Caption>
+          <div
+            className={cn(
+              "figure mt-1 text-2xl text-wine sm:text-3xl lg:text-4xl",
+              item.tone === "gold" && "text-gold",
+              item.tone === "gold-ink" && "text-gold-ink",
+            )}
+          >
+            {item.value}
+          </div>
+          {item.caption ? (
+            <Caption className="mt-1 block text-muted">{item.caption}</Caption>
+          ) : null}
+        </div>
+      ))}
+    </div>
   );
 }
